@@ -14,14 +14,14 @@ import (
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/mxpv/podsync/pkg/builder"
 	"github.com/mxpv/podsync/pkg/config"
+	"github.com/mxpv/podsync/pkg/feed"
 	"github.com/mxpv/podsync/pkg/link"
 	"github.com/mxpv/podsync/pkg/model"
 )
 
 type Downloader interface {
-	Download(ctx context.Context, feedConfig *config.Feed, url string, destPath string) (string, error)
+	Download(ctx context.Context, feedConfig *config.Feed, episode *model.Episode, feedPath string) (string, error)
 }
 
 type Updater struct {
@@ -86,16 +86,19 @@ func (u *Updater) Update(ctx context.Context, feedConfig *config.Feed) error {
 		if os.IsNotExist(err) {
 			// There is no file on disk, download episode
 			logger.Infof("! downloading episode %s", episode.VideoURL)
-			if output, err := u.downloader.Download(ctx, feedConfig, episode.VideoURL, episodePath); err != nil {
-				logger.WithError(err).Errorf("youtube-dl error: %s", output)
-
+			if output, err := u.downloader.Download(ctx, feedConfig, episode, feedPath); err == nil {
+				downloaded++
+			} else {
 				// YouTube might block host with HTTP Error 429: Too Many Requests
 				// We still need to generate XML, so just stop sending download requests and
 				// retry next time
-				break
-			}
+				if strings.Contains(output, "HTTP Error 429") {
+					logger.WithError(err).Warnf("got too many requests error, will retry download next time")
+					break
+				}
 
-			downloaded++
+				logger.WithError(err).Errorf("youtube-dl error: %s", output)
+			}
 		} else {
 			// Episode already downloaded
 			logger.Debug("skipping download of episode")
@@ -103,8 +106,9 @@ func (u *Updater) Update(ctx context.Context, feedConfig *config.Feed) error {
 
 		// Record file size
 		if size, err := u.fileSize(episodePath); err != nil {
-			return errors.Wrap(err, "failed to get episode file size")
-		} else {
+			// Don't return on error, use estimated file size provided by builders
+			logger.WithError(err).Error("failed to get episode file size")
+		} else { //nolint
 			logger.Debugf("file size %d", size)
 			sizes[episode.ID] = size
 		}
@@ -209,7 +213,11 @@ func (u *Updater) buildPodcast(feed *model.Feed, cfg *config.Feed, sizes map[str
 	return &p, nil
 }
 
-func (u *Updater) makeEnclosure(feed *model.Feed, episode *model.Episode, cfg *config.Feed) (string, itunes.EnclosureType, int64) {
+func (u *Updater) makeEnclosure(
+	feed *model.Feed,
+	episode *model.Episode,
+	cfg *config.Feed,
+) (string, itunes.EnclosureType, int64) {
 	ext := "mp4"
 	contentType := itunes.MP4
 	if feed.Format == model.FormatAudio {
@@ -217,19 +225,24 @@ func (u *Updater) makeEnclosure(feed *model.Feed, episode *model.Episode, cfg *c
 		contentType = itunes.MP3
 	}
 
-	// Make sure there is no http:// prefix
-	hostname := strings.TrimPrefix(u.config.Server.Hostname, "http://")
-
 	url := fmt.Sprintf(
-		"http://%s:%d/%s/%s.%s",
-		hostname,
-		u.config.Server.Port,
+		"%s/%s/%s.%s",
+		u.hostname(),
 		cfg.ID,
 		episode.ID,
 		ext,
 	)
 
 	return url, contentType, episode.Size
+}
+
+func (u *Updater) hostname() string {
+	hostname := strings.TrimSuffix(u.config.Server.Hostname, "/")
+	if !strings.HasPrefix(hostname, "http") {
+		hostname = fmt.Sprintf("http://%s", hostname)
+	}
+
+	return hostname
 }
 
 func (u *Updater) episodeName(feedConfig *config.Feed, episode *model.Episode) string {
@@ -250,9 +263,9 @@ func (u *Updater) fileSize(path string) (int64, error) {
 	return info.Size(), nil
 }
 
-func (u *Updater) makeBuilder(ctx context.Context, cfg *config.Feed) (builder.Builder, error) {
+func (u *Updater) makeBuilder(ctx context.Context, cfg *config.Feed) (feed.Builder, error) {
 	var (
-		provider builder.Builder
+		provider feed.Builder
 		err      error
 	)
 
@@ -263,9 +276,9 @@ func (u *Updater) makeBuilder(ctx context.Context, cfg *config.Feed) (builder.Bu
 
 	switch info.Provider {
 	case link.ProviderYoutube:
-		provider, err = builder.NewYouTubeBuilder(u.config.Tokens.YouTube)
+		provider, err = feed.NewYouTubeBuilder(u.config.Tokens.YouTube)
 	case link.ProviderVimeo:
-		provider, err = builder.NewVimeoBuilder(ctx, u.config.Tokens.Vimeo)
+		provider, err = feed.NewVimeoBuilder(ctx, u.config.Tokens.Vimeo)
 	default:
 		return nil, errors.Errorf("unsupported provider %q", info.Provider)
 	}

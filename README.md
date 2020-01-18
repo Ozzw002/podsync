@@ -2,9 +2,11 @@
 
 ![Podsync](docs/img/logo.png)
 
-[![Build Status](https://travis-ci.com/mxpv/podsync.svg?branch=master)](https://travis-ci.com/mxpv/podsync)
+[![](https://github.com/mxpv/podsync/workflows/CI/badge.svg)](https://github.com/mxpv/podsync/actions?query=workflow%3ACI)
+[![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/mxpv/podsync)](https://github.com/mxpv/podsync/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mxpv/podsync)](https://goreportcard.com/report/github.com/mxpv/podsync)
 [![Patreon](https://img.shields.io/badge/support-patreon-E6461A.svg)](https://www.patreon.com/podsync)
+[![Twitter Follow](https://img.shields.io/twitter/follow/pod_sync?style=social)](https://twitter.com/pod_sync)
 
 Podsync - is a simple, free service that lets you listen to any YouTube / Vimeo channels, playlists or user videos in
 podcast format.
@@ -33,14 +35,16 @@ In order to query YouTube or Vimeo API you have to obtain an API token first.
 
 ## Configuration example
 
+You need to create a configuration file (for instance `config.toml`) and specify the list of feeds that you're going to host.
+Here is an example how configuration might look like:
+
 ```toml
 [server]
 port = 8080
 data_dir = "/path/to/data/directory"
-hostname = "hostname"
 
 [tokens]
-youtube = "{YOUTUBE_API_TOKEN}"
+youtube = "{YOUTUBE_API_TOKEN}" # Tokens from `Access tokens` section
 vimeo = "{VIMEO_API_TOKEN}"
 
 [feeds]
@@ -50,11 +54,28 @@ vimeo = "{VIMEO_API_TOKEN}"
   update_period = "12h" # How often query for updates, examples: "60m", "4h", "2h45m"
   quality = "high" # or "low"
   format = "video" # or "audio"
+  cover_art = "{IMAGE_URL}" # Optional URL address of an image file
 ```
 
-Episodes files will be kept at: `/path/to/data/directory/ID1`
+Episodes files will be kept at: `/path/to/data/directory/ID1`, feed will be accessible from: `http://localhost/ID1.xml`
 
-Feed will be accessible from: `http://hostname:8080/ID1.xml`
+If you want to hide Podsync behind reverse proxy like nginx, you can use `hostname` field:
+
+```toml
+[server]
+port = 8080
+hostname = "https://my.test.host:4443"
+
+[feeds]
+  [feeds.ID1]
+  ...
+```
+
+Server will be accessible from `http://localhost:8080`, but episode links will point to `https://my.test.host:4443/ID1/...`
+
+## One click deployment
+
+[![Deploy to AWS](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-west-1#/stacks/new?stackName=Podsync&templateURL=https://podsync-cf.s3.amazonaws.com/cloud_formation.yml)
 
 ## How to run
 
@@ -87,5 +108,5 @@ $ docker-compose up
   ```
 - Run GoReleaser at the root of your repository:
   ```
-  $ goreleaser --rm-dist
+  $ make release
   ```
